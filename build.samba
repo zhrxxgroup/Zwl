@@ -1,0 +1,4 @@
+enable_verbose();
+compile(server.c, server);
+compile(client.c, client);
+
