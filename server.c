@@ -1,12 +1,16 @@
 #include <stdio.h>
+#include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 #include <arpa/inet.h>
-#include "zwl.h" 
+#include "zwl.h"
 
 #define PORT 9011
 #define BUFFER_SIZE 4096
+
+int client_count = 0;
+
 
 void handle_client(int client_socket) {
     char buffer[BUFFER_SIZE];
@@ -24,16 +28,37 @@ void handle_client(int client_socket) {
     printf("Received Message:\nTarget: %s\nHeader: %s\n", message.target, message.header);
 
     
-    if (parse_zwl_header(&message) == HANDSHAKE) {
-        const char *response = "TARGET: SERVER\r\nHEADER: HANDSHAKE\r\nPAYLOAD:\r\nstatus: connected\r\n";
+    if (parse_zwl_header(&message) == HANDSHAKE) {+
+        client_count++;
+        const char *response = "TARGET: CLIENT\r\nHEADER: HANDSHAKE\r\nPAYLOAD:\r\nstatus: connected\r\n";
         send(client_socket, response, strlen(response), 0);
     } else if (parse_zwl_header(&message) == CLOSE) {
-        const char *response = "TARGET: SERVER\r\nHEADER: CLOSE\r\nPAYLOAD:\r\nstatus: goodbye\r\n";
+        client_count--;
+        const char *response = "TARGET: CLIENT\r\nHEADER: CLOSE\r\nPAYLOAD:\r\nstatus: goodbye\r\n";
         send(client_socket, response, strlen(response), 0);
     } else {
-        const char *response = "TARGET: SERVER\r\nHEADER: ERROR\r\nPAYLOAD:\r\nmessage: invalid header\r\n";
+        const char *response = "TARGET: CLIENT\r\nHEADER: ERROR\r\nPAYLOAD:\r\nmessage: invalid header\r\n";
         send(client_socket, response, strlen(response), 0);
     }
+
+    bool running = true;
+
+    while (running) {
+        char xbuffer[BUFFER_SIZE];
+        ssize_t xbytes_received = recv(client_socket, buffer, sizeof(buffer) - 1, 0);
+        buffer[bytes_received] = '\0';
+        ZwlMessage xmessage = parse_zwl_message_body(buffer);
+        if (parse_zwl_header(&xmessage) == CLOSE) {
+            const char *response = "TARGET: CLIENT\r\nHEADER: CLOSE\r\nPAYLOAD:\r\nstatus: goodbye\r\n";
+            send(client_socket, response, strlen(response), 0);
+            free_zwl_message(&xmessage);
+            running = false;
+        }
+        else {
+            continue;
+        }
+    }
+
 
     free_zwl_message(&message);
     close(client_socket);
@@ -71,6 +96,24 @@ int main() {
     printf("Server listening on port %d...\n", PORT);
 
     while (1) {
+
+        if ((client_socket = accept(server_fd, NULL, NULL)) < 0) {
+            perror("Accept failed");
+            continue;
+        }
+
+        pid_t pid = fork();
+        if (pid == 0) {
+            close(server_fd);
+            handle_client(client_socket);
+            exit(0);
+        } else if (pid > 0) {
+            close(client_socket);
+        } else {
+            perror("Fork failed");
+            continue;
+        }
+
         client_socket = accept(server_fd, (struct sockaddr *)&client_addr, &addr_len);
         if (client_socket == -1) {
             perror("accept");
